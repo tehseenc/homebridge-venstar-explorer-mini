@@ -1,6 +1,6 @@
 {
   "name": "homebridge-venstar-explorer-mini-dec-2024",
-  "version": "1.3.24",
+  "version": "1.3.25",
   "description": "Homebridge plugin to integrate a Venstar Explorer Mini thermostat.",
   "main": "index.js",
   "keywords": [

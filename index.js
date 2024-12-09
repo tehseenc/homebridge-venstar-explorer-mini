@@ -21,11 +21,9 @@ class VenstarExplorerMiniPlatform {
       this.log.warn('No thermostats configured.');
     }
 
-    // Called when cached accessories are loaded
     this.api.on('didFinishLaunching', () => {
       this.log('didFinishLaunching');
 
-      // Create and register accessories for each thermostat in config
       const newAccessories = [];
       for (const thermostatConfig of this.thermostats) {
         const uuid = this.api.hap.uuid.generate('homebridge:venstar:' + thermostatConfig.ip);
@@ -45,7 +43,6 @@ class VenstarExplorerMiniPlatform {
       }
 
       if (newAccessories.length > 0) {
-        // Register the newly created accessories
         this.api.registerPlatformAccessories("homebridge-venstar-explorer-mini-dec-2024", "VenstarExplorerMini", newAccessories);
         this.accessories = this.accessories.concat(newAccessories);
       }
@@ -53,7 +50,6 @@ class VenstarExplorerMiniPlatform {
   }
 
   configureAccessory(accessory) {
-    // This is called when Homebridge restores cached accessories upon restart
     this.log(`Configuring cached accessory: ${accessory.displayName}`);
     const config = accessory.context.config;
     if (config) {
@@ -71,7 +67,6 @@ class VenstarThermostatAccessory {
     this.name = config.name || "Venstar Thermostat";
     this.ip = config.ip;
 
-    // Default states
     this.currentTemperature = 20;
     this.targetTemperature = 22;
     this.currentHeatingCoolingState = hap.Characteristic.CurrentHeatingCoolingState.OFF;
@@ -80,22 +75,25 @@ class VenstarThermostatAccessory {
     this.userChangedUnits = false;
     this.fanOn = false;
 
-    // Set Accessory Information
     this.accessory.getService(hap.Service.AccessoryInformation)
       .setCharacteristic(hap.Characteristic.Manufacturer, "Venstar")
       .setCharacteristic(hap.Characteristic.Model, "Explorer Mini");
 
-    // Thermostat service
     this.thermostatService = this.accessory.getService(hap.Service.Thermostat)
       || this.accessory.addService(hap.Service.Thermostat, this.name);
 
-    // Fan service
     this.fanService = this.accessory.getService(hap.Service.Fan)
       || this.accessory.addService(hap.Service.Fan, `${this.name} Fan`);
 
-    // Setup handlers
     this.thermostatService.getCharacteristic(hap.Characteristic.CurrentHeatingCoolingState)
-      .on('get', this.handleCurrentHeatingCoolingStateGet.bind(this));
+      .on('get', (callback) => {
+        try {
+          callback(null, this.currentHeatingCoolingState);
+        } catch (err) {
+          this.log.error('Error in CurrentHeatingCoolingStateGet:', err.message);
+          callback(err);
+        }
+      });
 
     this.thermostatService.getCharacteristic(hap.Characteristic.TargetHeatingCoolingState)
       .setProps({
@@ -106,26 +104,63 @@ class VenstarThermostatAccessory {
           hap.Characteristic.TargetHeatingCoolingState.AUTO
         ]
       })
-      .on('get', this.handleTargetHeatingCoolingStateGet.bind(this))
+      .on('get', (callback) => {
+        try {
+          callback(null, this.targetHeatingCoolingState);
+        } catch (err) {
+          this.log.error('Error in TargetHeatingCoolingStateGet:', err.message);
+          callback(err);
+        }
+      })
       .on('set', this.handleTargetHeatingCoolingStateSet.bind(this));
 
     this.thermostatService.getCharacteristic(hap.Characteristic.CurrentTemperature)
-      .on('get', this.handleCurrentTemperatureGet.bind(this));
+      .on('get', (callback) => {
+        try {
+          callback(null, this.currentTemperature);
+        } catch (err) {
+          this.log.error('Error in CurrentTemperatureGet:', err.message);
+          callback(err);
+        }
+      });
 
     this.thermostatService.getCharacteristic(hap.Characteristic.TargetTemperature)
-      .on('get', this.handleTargetTemperatureGet.bind(this))
+      .on('get', (callback) => {
+        try {
+          callback(null, this.targetTemperature);
+        } catch (err) {
+          this.log.error('Error in TargetTemperatureGet:', err.message);
+          callback(err);
+        }
+      })
       .on('set', this.handleTargetTemperatureSet.bind(this))
       .setProps({ minValue: 10, maxValue: 32, minStep: 0.5 });
 
     this.thermostatService.getCharacteristic(hap.Characteristic.TemperatureDisplayUnits)
-      .on('get', this.handleTemperatureDisplayUnitsGet.bind(this))
+      .on('get', (callback) => {
+        try {
+          callback(null, this.temperatureDisplayUnits);
+        } catch (err) {
+          this.log.error('Error in TemperatureDisplayUnitsGet:', err.message);
+          callback(err);
+        }
+      })
       .on('set', this.handleTemperatureDisplayUnitsSet.bind(this));
 
     this.fanService.getCharacteristic(hap.Characteristic.On)
-      .on('get', this.handleFanOnGet.bind(this))
+      .on('get', async (callback) => {
+        try {
+          const response = await axios.get(`http://${this.ip}/query/info`);
+          const data = response.data;
+          this.fanOn = (data.fan === 1);
+          callback(null, this.fanOn);
+        } catch (err) {
+          this.log.error('Error getting fan state:', err.message);
+          callback(err);
+        }
+      })
       .on('set', this.handleFanOnSet.bind(this));
 
-    // Start polling
     this.pollThermostat();
     this.pollInterval = setInterval(() => {
       this.pollThermostat();
@@ -158,7 +193,6 @@ class VenstarThermostatAccessory {
 
       this.fanOn = (data.fan === 1);
 
-      // Update characteristics
       this.thermostatService.updateCharacteristic(hap.Characteristic.CurrentTemperature, this.currentTemperature);
       this.thermostatService.updateCharacteristic(hap.Characteristic.TargetTemperature, this.targetTemperature);
       this.thermostatService.updateCharacteristic(hap.Characteristic.CurrentHeatingCoolingState, this.currentHeatingCoolingState);
@@ -183,7 +217,6 @@ class VenstarThermostatAccessory {
   }
 
   determineCurrentState(state) {
-    // state: 0=idle,1=heating,2=cooling
     if (state === 1) return hap.Characteristic.CurrentHeatingCoolingState.HEAT;
     if (state === 2) return hap.Characteristic.CurrentHeatingCoolingState.COOL;
     return hap.Characteristic.CurrentHeatingCoolingState.OFF;
@@ -207,36 +240,26 @@ class VenstarThermostatAccessory {
     try {
       const controlUrl = `http://${this.ip}/control`;
   
-      // Retrieve last known setpoints and delta from memory or a cached variable
-      // This assumes you've stored them in `this.lastHeattemp`, `this.lastCooltemp`, and `this.setpointdelta`
-      // after the last call to pollThermostat(). If you haven't, consider storing them there.
-      // For now, let's assume you have them. If not, use some sane defaults.
-  
       const fallbackHeat = this.lastHeattemp || 70;
       const fallbackCool = this.lastCooltemp || 75;
-      const delta = this.setpointdelta || 2; // You should get this value from /query/info
-      const currentMode = mode ?? 0; // Off by default if not provided.
+      const delta = this.setpointdelta || 2;
+      const currentMode = mode ?? 0;
   
-      // If no heattemp/cooltemp provided, use fallback
       let finalHeattemp = (heattemp != null) ? heattemp : fallbackHeat;
       let finalCooltemp = (cooltemp != null) ? cooltemp : fallbackCool;
   
-      // If mode is auto (3), ensure cooltemp > heattemp + delta
       if (currentMode === 3) {
         if (finalCooltemp <= finalHeattemp + delta) {
           finalCooltemp = finalHeattemp + delta + 1; 
         }
       }
   
-      // The docs say all control calls with mode must include heattemp and cooltemp.
-      // Even if mode=off, still include them.
       const payload = {
         mode: currentMode,
         heattemp: finalHeattemp,
         cooltemp: finalCooltemp
       };
   
-      // Include fan only if provided
       if (fan != null) {
         payload.fan = fan;
       }
@@ -253,15 +276,6 @@ class VenstarThermostatAccessory {
     } catch (err) {
       this.log.error('Error setting thermostat:', err.message);
     }
-  }
-
-  // Thermostat handlers
-  handleCurrentHeatingCoolingStateGet(callback) {
-    callback(null, this.currentHeatingCoolingState);
-  }
-
-  handleTargetHeatingCoolingStateGet(callback) {
-    callback(null, this.targetHeatingCoolingState);
   }
 
   async handleTargetHeatingCoolingStateSet(value, callback) {
@@ -298,14 +312,6 @@ class VenstarThermostatAccessory {
     }
   }
 
-  handleCurrentTemperatureGet(callback) {
-    callback(null, this.currentTemperature);
-  }
-
-  handleTargetTemperatureGet(callback) {
-    callback(null, this.targetTemperature);
-  }
-
   async handleTargetTemperatureSet(value, callback) {
     this.targetTemperature = value;
     try {
@@ -332,27 +338,10 @@ class VenstarThermostatAccessory {
     }
   }
 
-  handleTemperatureDisplayUnitsGet(callback) {
-    callback(null, this.temperatureDisplayUnits);
-  }
-
   handleTemperatureDisplayUnitsSet(value, callback) {
     this.temperatureDisplayUnits = value;
     this.userChangedUnits = true;
     callback(null);
-  }
-
-  // Fan handlers
-  async handleFanOnGet(callback) {
-    try {
-      const response = await axios.get(`http://${this.ip}/query/info`);
-      const data = response.data;
-      this.fanOn = (data.fan === 1);
-      callback(null, this.fanOn);
-    } catch (err) {
-      this.log.error('Error getting fan state:', err.message);
-      callback(err);
-    }
   }
 
   async handleFanOnSet(value, callback) {

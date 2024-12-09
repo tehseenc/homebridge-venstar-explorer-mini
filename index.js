@@ -202,24 +202,54 @@ class VenstarThermostatAccessory {
     }
     return Math.round(tempC);
   }
-
+  
   async setThermostat(mode, heattemp, cooltemp, fan) {
     try {
       const controlUrl = `http://${this.ip}/control`;
-      const payload = { mode };
-      if (heattemp != null) payload.heattemp = heattemp;
-      if (cooltemp != null) payload.cooltemp = cooltemp;
-      if (fan != null) payload.fan = fan;
-
-
+  
+      // Retrieve last known setpoints and delta from memory or a cached variable
+      // This assumes you've stored them in `this.lastHeattemp`, `this.lastCooltemp`, and `this.setpointdelta`
+      // after the last call to pollThermostat(). If you haven't, consider storing them there.
+      // For now, let's assume you have them. If not, use some sane defaults.
+  
+      const fallbackHeat = this.lastHeattemp || 70;
+      const fallbackCool = this.lastCooltemp || 75;
+      const delta = this.setpointdelta || 2; // You should get this value from /query/info
+      const currentMode = mode ?? 0; // Off by default if not provided.
+  
+      // If no heattemp/cooltemp provided, use fallback
+      let finalHeattemp = (heattemp != null) ? heattemp : fallbackHeat;
+      let finalCooltemp = (cooltemp != null) ? cooltemp : fallbackCool;
+  
+      // If mode is auto (3), ensure cooltemp > heattemp + delta
+      if (currentMode === 3) {
+        if (finalCooltemp <= finalHeattemp + delta) {
+          finalCooltemp = finalHeattemp + delta + 1; 
+        }
+      }
+  
+      // The docs say all control calls with mode must include heattemp and cooltemp.
+      // Even if mode=off, still include them.
+      const payload = {
+        mode: currentMode,
+        heattemp: finalHeattemp,
+        cooltemp: finalCooltemp
+      };
+  
+      // Include fan only if provided
+      if (fan != null) {
+        payload.fan = fan;
+      }
+  
       const qs = new URLSearchParams(payload).toString();
-
+  
       await axios.post(controlUrl, qs, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       });
-      
-      this.log(`Thermostat updated: mode=${mode}, heattemp=${heattemp}, cooltemp=${cooltemp}, fan=${fan}`);
+  
+      this.log(`Thermostat updated: mode=${currentMode}, heattemp=${finalHeattemp}, cooltemp=${finalCooltemp}, fan=${fan}`);
       this.pollThermostat();
+  
     } catch (err) {
       this.log.error('Error setting thermostat:', err.message);
     }

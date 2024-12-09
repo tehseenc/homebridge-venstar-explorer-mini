@@ -1,0 +1,42 @@
+{
+    "pluginAlias": "VenstarExplorerMini",
+    "pluginType": "platform",
+    "singular": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": "string",
+          "title": "Platform Name",
+          "default": "VenstarExplorerMini"
+        },
+        "thermostats": {
+          "type": "array",
+          "title": "Thermostats",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "title": "Name",
+                "default": "My Venstar Thermostat"
+              },
+              "ip": {
+                "type": "string",
+                "title": "Thermostat IP Address",
+                "default": "192.168.1.100"
+              }
+            },
+            "required": [
+              "name",
+              "ip"
+            ]
+          }
+        }
+      },
+      "required": [
+        "thermostats"
+      ]
+    }
+  }
+  

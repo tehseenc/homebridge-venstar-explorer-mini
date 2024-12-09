@@ -21,40 +21,48 @@ class VenstarExplorerMiniPlatform {
       this.log.warn('No thermostats configured.');
     }
 
+    // Homebridge calls configureAccessory for cached accessories
+    // We just record them so we can update or use them later in didFinishLaunching
     this.api.on('didFinishLaunching', () => {
       this.log('didFinishLaunching');
 
-      const newAccessories = [];
+      const existingUUIDs = this.accessories.map(a => a.UUID);
       for (const thermostatConfig of this.thermostats) {
         const uuid = this.api.hap.uuid.generate('homebridge:venstar:' + thermostatConfig.ip);
         const existingAccessory = this.accessories.find(acc => acc.UUID === uuid);
 
         if (existingAccessory) {
           this.log(`Updating existing accessory: ${thermostatConfig.name}`);
+          // Update config on the existing accessory's instance
           existingAccessory.context.config = thermostatConfig;
-          new VenstarThermostatAccessory(this.log, thermostatConfig, this.api, existingAccessory);
+          // If the accessory instance was created in configureAccessory(), it should already have handlers.
+          // If not, and we need to ensure handlers, we can reinitialize here, 
+          // but first remove old services or check if it's already initialized.
+          if (!existingAccessory.context.initialized) {
+            new VenstarThermostatAccessory(this.log, thermostatConfig, this.api, existingAccessory);
+            existingAccessory.context.initialized = true;
+          } else {
+            // If already initialized, just update the accessory context/config if needed.
+          }
+
         } else {
           this.log(`Adding new accessory: ${thermostatConfig.name}`);
           const accessory = new this.api.platformAccessory(thermostatConfig.name, uuid);
           accessory.context.config = thermostatConfig;
           new VenstarThermostatAccessory(this.log, thermostatConfig, this.api, accessory);
-          newAccessories.push(accessory);
+          accessory.context.initialized = true;
+          this.api.registerPlatformAccessories("homebridge-venstar-explorer-mini-dec-2024", "VenstarExplorerMini", [accessory]);
+          this.accessories.push(accessory);
         }
-      }
-
-      if (newAccessories.length > 0) {
-        this.api.registerPlatformAccessories("homebridge-venstar-explorer-mini-dec-2024", "VenstarExplorerMini", newAccessories);
-        this.accessories = this.accessories.concat(newAccessories);
       }
     });
   }
 
   configureAccessory(accessory) {
+    // This is called when Homebridge restores cached accessories upon restart
     this.log(`Configuring cached accessory: ${accessory.displayName}`);
-    const config = accessory.context.config;
-    if (config) {
-      new VenstarThermostatAccessory(this.log, config, this.api, accessory);
-    }
+    // Do NOT create a new VenstarThermostatAccessory here directly.
+    // Just store the accessory. We'll fully initialize it in didFinishLaunching.
     this.accessories.push(accessory);
   }
 }
@@ -85,7 +93,7 @@ class VenstarThermostatAccessory {
     this.fanService = this.accessory.getService(hap.Service.Fan)
       || this.accessory.addService(hap.Service.Fan, `${this.name} Fan`);
 
-    // Synchronous get handlers without try/catch (no async or throwing code)
+    // Set up handlers exactly once
     this.thermostatService.getCharacteristic(hap.Characteristic.CurrentHeatingCoolingState)
       .on('get', (callback) => {
         callback(null, this.currentHeatingCoolingState);
@@ -123,7 +131,6 @@ class VenstarThermostatAccessory {
       })
       .on('set', this.handleTemperatureDisplayUnitsSet.bind(this));
 
-    // Fan get handler is async, keep try/catch here
     this.fanService.getCharacteristic(hap.Characteristic.On)
       .on('get', async (callback) => {
         try {

@@ -40,26 +40,23 @@ class VenstarThermostatAccessory {
     this.name = config.name || "Venstar Thermostat";
     this.ip = config.ip;
 
-    this.service = new hap.Service.Thermostat(this.name);
+    this.thermostatService = new hap.Service.Thermostat(this.name);
+    this.fanService = new hap.Service.Fan(`${this.name} Fan`);
 
-    // Default values
-    // Internally, HomeKit always uses Celsius for CurrentTemperature and TargetTemperature.
-    // We'll store temperatures in Celsius internally.
-    this.currentTemperature = 20;
-    this.targetTemperature = 22;
+    // Default internal states
+    this.currentTemperature = 20; // Celsius
+    this.targetTemperature = 22; // Celsius
     this.currentHeatingCoolingState = hap.Characteristic.CurrentHeatingCoolingState.OFF;
     this.targetHeatingCoolingState = hap.Characteristic.TargetHeatingCoolingState.AUTO;
-    // TemperatureDisplayUnits: 0 = Celsius, 1 = Fahrenheit
-    // We'll initially set this based on the device units once we poll. 
-    // If the user changes it, we won't override their choice on subsequent polls.
     this.temperatureDisplayUnits = hap.Characteristic.TemperatureDisplayUnits.CELSIUS;
-    this.userChangedUnits = false; // track if user changed units
+    this.userChangedUnits = false; // tracks if user manually changed display units
+    this.fanOn = false; // true if fan forced on, false if auto
 
-    // Setup characteristic handlers
-    this.service.getCharacteristic(hap.Characteristic.CurrentHeatingCoolingState)
+    // Thermostat characteristic handlers
+    this.thermostatService.getCharacteristic(hap.Characteristic.CurrentHeatingCoolingState)
       .on('get', this.handleCurrentHeatingCoolingStateGet.bind(this));
 
-    this.service.getCharacteristic(hap.Characteristic.TargetHeatingCoolingState)
+    this.thermostatService.getCharacteristic(hap.Characteristic.TargetHeatingCoolingState)
       .setProps({
         validValues: [
           hap.Characteristic.TargetHeatingCoolingState.OFF,
@@ -71,17 +68,22 @@ class VenstarThermostatAccessory {
       .on('get', this.handleTargetHeatingCoolingStateGet.bind(this))
       .on('set', this.handleTargetHeatingCoolingStateSet.bind(this));
 
-    this.service.getCharacteristic(hap.Characteristic.CurrentTemperature)
+    this.thermostatService.getCharacteristic(hap.Characteristic.CurrentTemperature)
       .on('get', this.handleCurrentTemperatureGet.bind(this));
 
-    this.service.getCharacteristic(hap.Characteristic.TargetTemperature)
+    this.thermostatService.getCharacteristic(hap.Characteristic.TargetTemperature)
       .on('get', this.handleTargetTemperatureGet.bind(this))
       .on('set', this.handleTargetTemperatureSet.bind(this))
       .setProps({ minValue: 10, maxValue: 32, minStep: 0.5 });
 
-    this.service.getCharacteristic(hap.Characteristic.TemperatureDisplayUnits)
+    this.thermostatService.getCharacteristic(hap.Characteristic.TemperatureDisplayUnits)
       .on('get', this.handleTemperatureDisplayUnitsGet.bind(this))
       .on('set', this.handleTemperatureDisplayUnitsSet.bind(this));
+
+    // Fan characteristic handlers
+    this.fanService.getCharacteristic(hap.Characteristic.On)
+      .on('get', this.handleFanOnGet.bind(this))
+      .on('set', this.handleFanOnSet.bind(this));
 
     // Poll the thermostat periodically for updates
     this.pollThermostat();
@@ -96,7 +98,8 @@ class VenstarThermostatAccessory {
   getAccessory() {
     const uuid = this.api.hap.uuid.generate('homebridge:venstar:' + this.ip);
     const accessory = new this.api.platformAccessory(this.name, uuid);
-    accessory.addService(this.service);
+    accessory.addService(this.thermostatService);
+    accessory.addService(this.fanService);
     return accessory;
   }
 
@@ -106,8 +109,9 @@ class VenstarThermostatAccessory {
       const response = await axios.get(infoUrl);
       const data = response.data;
 
-      // data fields: mode, spacetemp, heattemp, cooltemp, tempunits, state
-      // tempunits: 0=F, 1=C
+      // data fields of interest: mode, spacetemp, heattemp, cooltemp, tempunits, state, fan
+      // tempunits: 0=F,1=C
+      // fan: 0=auto,1=on
 
       const modeMap = {
         0: hap.Characteristic.TargetHeatingCoolingState.OFF,
@@ -121,19 +125,24 @@ class VenstarThermostatAccessory {
       this.targetHeatingCoolingState = modeMap[data.mode] || hap.Characteristic.TargetHeatingCoolingState.OFF;
       this.currentHeatingCoolingState = this.determineCurrentState(data.state);
 
-      // If the user hasn't changed units manually, sync HomeKit units to the device’s units
+      // Sync units if user hasn't changed them
       if (!this.userChangedUnits) {
         this.temperatureDisplayUnits = (data.tempunits === 0)
           ? hap.Characteristic.TemperatureDisplayUnits.FAHRENHEIT
           : hap.Characteristic.TemperatureDisplayUnits.CELSIUS;
       }
 
+      // Fan state
+      this.fanOn = (data.fan === 1);
+
       // Update HomeKit
-      this.service.updateCharacteristic(hap.Characteristic.CurrentTemperature, this.currentTemperature);
-      this.service.updateCharacteristic(hap.Characteristic.TargetTemperature, this.targetTemperature);
-      this.service.updateCharacteristic(hap.Characteristic.CurrentHeatingCoolingState, this.currentHeatingCoolingState);
-      this.service.updateCharacteristic(hap.Characteristic.TargetHeatingCoolingState, this.targetHeatingCoolingState);
-      this.service.updateCharacteristic(hap.Characteristic.TemperatureDisplayUnits, this.temperatureDisplayUnits);
+      this.thermostatService.updateCharacteristic(hap.Characteristic.CurrentTemperature, this.currentTemperature);
+      this.thermostatService.updateCharacteristic(hap.Characteristic.TargetTemperature, this.targetTemperature);
+      this.thermostatService.updateCharacteristic(hap.Characteristic.CurrentHeatingCoolingState, this.currentHeatingCoolingState);
+      this.thermostatService.updateCharacteristic(hap.Characteristic.TargetHeatingCoolingState, this.targetHeatingCoolingState);
+      this.thermostatService.updateCharacteristic(hap.Characteristic.TemperatureDisplayUnits, this.temperatureDisplayUnits);
+
+      this.fanService.updateCharacteristic(hap.Characteristic.On, this.fanOn);
 
     } catch (err) {
       this.log.error('Error polling thermostat:', err.message);
@@ -142,9 +151,8 @@ class VenstarThermostatAccessory {
 
   determineTargetTemperature(data) {
     // mode: 0=off,1=heat,2=cool,3=auto
-    // In AUTO, use midpoint between heattemp and cooltemp.
-    // In HEAT, use heattemp. In COOL, use cooltemp. In OFF, use spacetemp.
-
+    // For AUTO, use midpoint of heattemp and cooltemp.
+    // For HEAT, use heattemp. For COOL, use cooltemp. OFF uses spacetemp.
     if (data.mode === 3) { // AUTO
       const avg = (data.heattemp + data.cooltemp) / 2;
       return this.convertToHomeKitTemp(avg, data.tempunits);
@@ -158,7 +166,7 @@ class VenstarThermostatAccessory {
       return this.convertToHomeKitTemp(data.cooltemp, data.tempunits);
     }
 
-    // OFF mode: just use current room temp
+    // OFF mode
     return this.convertToHomeKitTemp(data.spacetemp, data.tempunits);
   }
 
@@ -174,8 +182,7 @@ class VenstarThermostatAccessory {
   }
 
   convertToHomeKitTemp(temp, units) {
-    // If units=0 (F), convert to C for HomeKit.
-    // If units=1 (C), already in Celsius.
+    // If units=0 (F), convert to C.
     if (units === 0) {
       return (temp - 32) * (5.0 / 9.0);
     }
@@ -183,7 +190,7 @@ class VenstarThermostatAccessory {
   }
 
   convertFromHomeKitTemp(tempC, targetUnits) {
-    // Convert from Celsius (HomeKit) to device units
+    // Convert from Celsius to device units
     if (targetUnits === 0) {
       // Fahrenheit
       return Math.round((tempC * 9.0 / 5.0) + 32);
@@ -193,22 +200,24 @@ class VenstarThermostatAccessory {
     }
   }
 
-  async setThermostat(mode, heattemp, cooltemp) {
+  async setThermostat(mode, heattemp, cooltemp, fan) {
     try {
       const controlUrl = `http://${this.ip}/control`;
       const payload = { mode };
+
       if (heattemp != null) payload.heattemp = heattemp;
       if (cooltemp != null) payload.cooltemp = cooltemp;
+      if (fan != null) payload.fan = fan;
 
       await axios.post(controlUrl, payload);
-      this.log(`Thermostat updated: mode=${mode}, heattemp=${heattemp}, cooltemp=${cooltemp}`);
+      this.log(`Thermostat updated: mode=${mode}, heattemp=${heattemp}, cooltemp=${cooltemp}, fan=${fan}`);
       this.pollThermostat(); // refresh
     } catch (err) {
       this.log.error('Error setting thermostat:', err.message);
     }
   }
 
-  // Characteristic Handlers
+  // --- Thermostat Characteristic Handlers ---
 
   handleCurrentHeatingCoolingStateGet(callback) {
     callback(null, this.currentHeatingCoolingState);
@@ -221,7 +230,7 @@ class VenstarThermostatAccessory {
   async handleTargetHeatingCoolingStateSet(value, callback) {
     this.targetHeatingCoolingState = value;
 
-    // Map HomeKit states to Venstar mode: OFF=0,HEAT=1,COOL=2,AUTO=3
+    // Map HomeKit states to Venstar modes
     const modeMap = {
       [hap.Characteristic.TargetHeatingCoolingState.OFF]: 0,
       [hap.Characteristic.TargetHeatingCoolingState.HEAT]: 1,
@@ -230,7 +239,7 @@ class VenstarThermostatAccessory {
     };
 
     const venstarMode = modeMap[value];
-    
+
     let data;
     try {
       const response = await axios.get(`http://${this.ip}/query/info`);
@@ -239,9 +248,8 @@ class VenstarThermostatAccessory {
       this.log.error('Error reading thermostat info:', err.message);
       return callback(err);
     }
-    
-    const tempUnits = data.tempunits; // 0=F,1=C
-    // Convert current targetTemperature (C) back to device units
+
+    const tempUnits = data.tempunits;
     const convertedTemp = this.convertFromHomeKitTemp(this.targetTemperature, tempUnits);
 
     let heattemp = null;
@@ -253,12 +261,12 @@ class VenstarThermostatAccessory {
       // Cool mode
       cooltemp = convertedTemp;
     } else if (venstarMode === 3) {
-      // Auto mode: set a small band around target
+      // Auto mode: set a band around target
       heattemp = convertedTemp - 1;
       cooltemp = convertedTemp + 1;
     }
 
-    await this.setThermostat(venstarMode, heattemp, cooltemp);
+    await this.setThermostat(venstarMode, heattemp, cooltemp, null);
 
     callback(null);
   }
@@ -274,10 +282,9 @@ class VenstarThermostatAccessory {
   async handleTargetTemperatureSet(value, callback) {
     this.targetTemperature = value;
     try {
-      const infoUrl = `http://${this.ip}/query/info`;
-      const response = await axios.get(infoUrl);
+      const response = await axios.get(`http://${this.ip}/query/info`);
       const data = response.data;
-      const tempUnits = data.tempunits; // 0=F,1=C
+      const tempUnits = data.tempunits;
 
       const convertedTemp = this.convertFromHomeKitTemp(value, tempUnits);
 
@@ -286,18 +293,18 @@ class VenstarThermostatAccessory {
 
       // mode: 0=off,1=heat,2=cool,3=auto
       if (data.mode === 1) {
-        // Heat mode
+        // Heat
         newHeattemp = convertedTemp;
       } else if (data.mode === 2) {
-        // Cool mode
+        // Cool
         newCooltemp = convertedTemp;
       } else if (data.mode === 3) {
-        // Auto mode: small band around target
+        // Auto
         newHeattemp = convertedTemp - 1;
         newCooltemp = convertedTemp + 1;
       }
 
-      await this.setThermostat(data.mode, newHeattemp, newCooltemp);
+      await this.setThermostat(data.mode, newHeattemp, newCooltemp, null);
     } catch (err) {
       this.log.error('Error setting target temperature:', err.message);
       return callback(err);
@@ -311,9 +318,59 @@ class VenstarThermostatAccessory {
   }
 
   handleTemperatureDisplayUnitsSet(value, callback) {
-    // The user changed the display units in HomeKit
     this.temperatureDisplayUnits = value;
-    this.userChangedUnits = true; // prevent overwriting from device units on next poll
+    this.userChangedUnits = true;
     callback(null);
+  }
+
+  // --- Fan Characteristic Handlers ---
+
+  async handleFanOnGet(callback) {
+    try {
+      const response = await axios.get(`http://${this.ip}/query/info`);
+      const data = response.data;
+      // fan: 0=auto,1=on
+      this.fanOn = (data.fan === 1);
+      callback(null, this.fanOn);
+    } catch (err) {
+      this.log.error('Error getting fan state:', err.message);
+      callback(err);
+    }
+  }
+
+  async handleFanOnSet(value, callback) {
+    // value: true (fan on), false (auto)
+    this.fanOn = value;
+    const fanValue = this.fanOn ? 1 : 0;
+
+    try {
+      // Get current mode & setpoints to avoid overwriting them unintentionally
+      const response = await axios.get(`http://${this.ip}/query/info`);
+      const data = response.data;
+      const tempUnits = data.tempunits;
+
+      // Convert current targetTemperature to device units:
+      const convertedTemp = this.convertFromHomeKitTemp(this.targetTemperature, tempUnits);
+
+      let heattemp = null;
+      let cooltemp = null;
+
+      // mode: 0=off,1=heat,2=cool,3=auto
+      if (data.mode === 1) {
+        heattemp = convertedTemp;
+      } else if (data.mode === 2) {
+        cooltemp = convertedTemp;
+      } else if (data.mode === 3) {
+        // auto band
+        heattemp = convertedTemp - 1;
+        cooltemp = convertedTemp + 1;
+      }
+
+      await this.setThermostat(data.mode, heattemp, cooltemp, fanValue);
+      callback(null);
+    } catch (err) {
+      this.log.error('Error setting fan state:', err.message);
+      callback(err);
+    }
   }
 }

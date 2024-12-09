@@ -63,7 +63,7 @@ class VenstarThermostatAccessory {
     this.ip = config.ip;
 
     this.currentTemperature = 20;
-    this.targetTemperature = 22;
+    this.targetTemperature = 22; 
     this.currentHeatingCoolingState = hap.Characteristic.CurrentHeatingCoolingState.OFF;
     this.targetHeatingCoolingState = hap.Characteristic.TargetHeatingCoolingState.AUTO;
     this.temperatureDisplayUnits = hap.Characteristic.TemperatureDisplayUnits.CELSIUS;
@@ -71,9 +71,9 @@ class VenstarThermostatAccessory {
     this.fanOn = false;
 
     // Add these for AUTO mode thresholds
-    this.heatingSetpointC = 20; 
-    this.coolingSetpointC = 24; 
-    this.deviceUnits = 1; // Assume Celsius until we poll
+    this.heatingSetpointC = 20;
+    this.coolingSetpointC = 24;
+    this.deviceUnits = 1; // assume Celsius until polling
 
     this.accessory.getService(hap.Service.AccessoryInformation)
       .setCharacteristic(hap.Characteristic.Manufacturer, "Venstar")
@@ -87,9 +87,7 @@ class VenstarThermostatAccessory {
 
     // Original handlers
     this.thermostatService.getCharacteristic(hap.Characteristic.CurrentHeatingCoolingState)
-      .on('get', (callback) => {
-        callback(null, this.currentHeatingCoolingState);
-      });
+      .on('get', (callback) => callback(null, this.currentHeatingCoolingState));
 
     this.thermostatService.getCharacteristic(hap.Characteristic.TargetHeatingCoolingState)
       .setProps({
@@ -100,28 +98,22 @@ class VenstarThermostatAccessory {
           hap.Characteristic.TargetHeatingCoolingState.AUTO
         ]
       })
-      .on('get', (callback) => {
-        callback(null, this.targetHeatingCoolingState);
-      })
+      .on('get', (callback) => callback(null, this.targetHeatingCoolingState))
       .on('set', this.handleTargetHeatingCoolingStateSet.bind(this));
 
     this.thermostatService.getCharacteristic(hap.Characteristic.CurrentTemperature)
-      .on('get', (callback) => {
-        callback(null, this.currentTemperature);
-      });
+      .on('get', (callback) => callback(null, this.currentTemperature));
 
     this.thermostatService.getCharacteristic(hap.Characteristic.TargetTemperature)
       .on('get', (callback) => {
-        // Only return TargetTemperature in non-AUTO modes
+        // Return TargetTemperature as before for non-auto modes
         callback(null, this.targetTemperature);
       })
       .on('set', this.handleTargetTemperatureSet.bind(this))
       .setProps({ minValue: 10, maxValue: 32, minStep: 0.5 });
 
     this.thermostatService.getCharacteristic(hap.Characteristic.TemperatureDisplayUnits)
-      .on('get', (callback) => {
-        callback(null, this.temperatureDisplayUnits);
-      })
+      .on('get', (callback) => callback(null, this.temperatureDisplayUnits))
       .on('set', this.handleTemperatureDisplayUnitsSet.bind(this));
 
     this.fanService.getCharacteristic(hap.Characteristic.On)
@@ -138,31 +130,24 @@ class VenstarThermostatAccessory {
       })
       .on('set', this.handleFanOnSet.bind(this));
 
-    // Add Heating/Cooling threshold for AUTO mode
+    // Add Heating and Cooling threshold characteristics for AUTO mode
     this.thermostatService.getCharacteristic(hap.Characteristic.HeatingThresholdTemperature)
-      .on('get', (callback) => {
-        callback(null, this.heatingSetpointC);
-      })
+      .on('get', (callback) => callback(null, this.heatingSetpointC))
       .on('set', this.handleHeatingThresholdTemperatureSet.bind(this))
       .setProps({ minValue: 10, maxValue: 32, minStep: 0.5 });
 
     this.thermostatService.getCharacteristic(hap.Characteristic.CoolingThresholdTemperature)
-      .on('get', (callback) => {
-        callback(null, this.coolingSetpointC);
-      })
+      .on('get', (callback) => callback(null, this.coolingSetpointC))
       .on('set', this.handleCoolingThresholdTemperatureSet.bind(this))
       .setProps({ minValue: 10, maxValue: 32, minStep: 0.5 });
 
     this.pollThermostat();
-    this.pollInterval = setInterval(() => {
-      this.pollThermostat();
-    }, 60 * 1000);
+    this.pollInterval = setInterval(() => this.pollThermostat(), 60 * 1000);
   }
 
   async pollThermostat() {
     try {
-      const infoUrl = `http://${this.ip}/query/info`;
-      const response = await axios.get(infoUrl);
+      const response = await axios.get(`http://${this.ip}/query/info`);
       const data = response.data;
 
       const modeMap = {
@@ -186,15 +171,15 @@ class VenstarThermostatAccessory {
       this.fanOn = (data.fan === 1);
 
       if (data.mode === 3) {
-        // AUTO mode: update thresholds from device setpoints
+        // AUTO: use thresholds from device
         this.heatingSetpointC = this.convertToHomeKitTemp(data.heattemp, data.tempunits);
         this.coolingSetpointC = this.convertToHomeKitTemp(data.cooltemp, data.tempunits);
 
-        // Update thresholds, no target temp update in AUTO
+        // Update thresholds
         this.thermostatService.updateCharacteristic(hap.Characteristic.HeatingThresholdTemperature, this.heatingSetpointC);
         this.thermostatService.updateCharacteristic(hap.Characteristic.CoolingThresholdTemperature, this.coolingSetpointC);
       } else {
-        // Non-AUTO modes behave as before
+        // Non-auto: update target temp as before
         this.targetTemperature = this.determineTargetTemperature(data);
         this.thermostatService.updateCharacteristic(hap.Characteristic.TargetTemperature, this.targetTemperature);
       }
@@ -203,7 +188,6 @@ class VenstarThermostatAccessory {
       this.thermostatService.updateCharacteristic(hap.Characteristic.CurrentHeatingCoolingState, this.currentHeatingCoolingState);
       this.thermostatService.updateCharacteristic(hap.Characteristic.TargetHeatingCoolingState, this.targetHeatingCoolingState);
       this.thermostatService.updateCharacteristic(hap.Characteristic.TemperatureDisplayUnits, this.temperatureDisplayUnits);
-
       this.fanService.updateCharacteristic(hap.Characteristic.On, this.fanOn);
 
     } catch (err) {
@@ -212,7 +196,7 @@ class VenstarThermostatAccessory {
   }
 
   determineTargetTemperature(data) {
-    // Same as original logic for non-auto modes
+    // Same original logic for non-auto modes
     if (data.mode === 3) {
       const avg = (data.heattemp + data.cooltemp) / 2;
       return this.convertToHomeKitTemp(avg, data.tempunits);
@@ -246,37 +230,18 @@ class VenstarThermostatAccessory {
     try {
       const controlUrl = `http://${this.ip}/control`;
 
-      const fallbackHeat = this.lastHeattemp || 70;
-      const fallbackCool = this.lastCooltemp || 75;
-      const delta = this.setpointdelta || 2;
-      const currentMode = mode ?? 0;
-
-      let finalHeattemp = (heattemp != null) ? heattemp : fallbackHeat;
-      let finalCooltemp = (cooltemp != null) ? cooltemp : fallbackCool;
-
-      if (currentMode === 3) {
-        if (finalCooltemp <= finalHeattemp + delta) {
-          finalCooltemp = finalHeattemp + delta + 1; 
-        }
-      }
-
-      const payload = {
-        mode: currentMode,
-        heattemp: finalHeattemp,
-        cooltemp: finalCooltemp
-      };
-
-      if (fan != null) {
-        payload.fan = fan;
-      }
-
-      const qs = new URLSearchParams(payload).toString();
+      const qs = new URLSearchParams({
+        mode: mode,
+        heattemp: heattemp ?? 70,
+        cooltemp: cooltemp ?? 75,
+        ...(fan != null ? { fan: fan } : {})
+      }).toString();
 
       await axios.post(controlUrl, qs, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       });
 
-      this.log(`Thermostat updated: mode=${currentMode}, heattemp=${finalHeattemp}, cooltemp=${finalCooltemp}, fan=${fan}`);
+      this.log(`Thermostat updated: mode=${mode}, heattemp=${heattemp}, cooltemp=${cooltemp}, fan=${fan}`);
       this.pollThermostat();
 
     } catch (err) {
@@ -284,25 +249,25 @@ class VenstarThermostatAccessory {
     }
   }
 
-  // Handlers for AUTO thresholds
+  // AUTO threshold handlers
   handleHeatingThresholdTemperatureSet(value, callback) {
     this.heatingSetpointC = value;
-    this.updateAutoSetpoints();
-    callback(null);
-  }
-
-  handleCoolingThresholdTemperatureSet(value, callback) {
-    this.coolingSetpointC = value;
-    this.updateAutoSetpoints();
-    callback(null);
-  }
-
-  updateAutoSetpoints() {
     if (this.targetHeatingCoolingState === hap.Characteristic.TargetHeatingCoolingState.AUTO) {
       const heattemp = this.convertFromHomeKitTemp(this.heatingSetpointC, this.deviceUnits);
       const cooltemp = this.convertFromHomeKitTemp(this.coolingSetpointC, this.deviceUnits);
       this.setThermostat(3, heattemp, cooltemp, null);
     }
+    callback(null);
+  }
+
+  handleCoolingThresholdTemperatureSet(value, callback) {
+    this.coolingSetpointC = value;
+    if (this.targetHeatingCoolingState === hap.Characteristic.TargetHeatingCoolingState.AUTO) {
+      const heattemp = this.convertFromHomeKitTemp(this.heatingSetpointC, this.deviceUnits);
+      const cooltemp = this.convertFromHomeKitTemp(this.coolingSetpointC, this.deviceUnits);
+      this.setThermostat(3, heattemp, cooltemp, null);
+    }
+    callback(null);
   }
 
   async handleTargetHeatingCoolingStateSet(value, callback) {
@@ -324,15 +289,13 @@ class VenstarThermostatAccessory {
       let heattemp = null;
       let cooltemp = null;
       if (venstarMode === 1) {
-        // Heat mode from TargetTemp
         const convertedTemp = this.convertFromHomeKitTemp(this.targetTemperature, tempUnits);
         heattemp = convertedTemp;
       } else if (venstarMode === 2) {
-        // Cool mode from TargetTemp
         const convertedTemp = this.convertFromHomeKitTemp(this.targetTemperature, tempUnits);
         cooltemp = convertedTemp;
       } else if (venstarMode === 3) {
-        // AUTO mode from thresholds
+        // On switching to AUTO, use the current thresholds
         const heatC = this.heatingSetpointC;
         const coolC = this.coolingSetpointC;
         heattemp = this.convertFromHomeKitTemp(heatC, tempUnits);
@@ -361,7 +324,7 @@ class VenstarThermostatAccessory {
       if (data.mode === 1) newHeattemp = convertedTemp; 
       else if (data.mode === 2) newCooltemp = convertedTemp;
       else if (data.mode === 3) {
-        // In AUTO, ignore TargetTemperature sets; use thresholds instead
+        // In AUTO, ignore TargetTemperature sets (only use thresholds)
       }
 
       if (data.mode !== 3) {
@@ -397,7 +360,7 @@ class VenstarThermostatAccessory {
       } else if (data.mode === 2) {
         cooltemp = convertedTemp;
       } else if (data.mode === 3) {
-        // AUTO: Just pick something around targetTemp if needed
+        // In AUTO mode, just pick something around targetTemp if needed
         heattemp = convertedTemp - 1;
         cooltemp = convertedTemp + 1;
       }

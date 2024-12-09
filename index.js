@@ -211,7 +211,13 @@ class VenstarThermostatAccessory {
       if (cooltemp != null) payload.cooltemp = cooltemp;
       if (fan != null) payload.fan = fan;
 
-      await axios.post(controlUrl, payload);
+
+      const qs = new URLSearchParams(payload).toString();
+
+      await axios.post(controlUrl, qs, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      });
+      
       this.log(`Thermostat updated: mode=${mode}, heattemp=${heattemp}, cooltemp=${cooltemp}, fan=${fan}`);
       this.pollThermostat();
     } catch (err) {

@@ -85,14 +85,10 @@ class VenstarThermostatAccessory {
     this.fanService = this.accessory.getService(hap.Service.Fan)
       || this.accessory.addService(hap.Service.Fan, `${this.name} Fan`);
 
+    // Synchronous get handlers without try/catch (no async or throwing code)
     this.thermostatService.getCharacteristic(hap.Characteristic.CurrentHeatingCoolingState)
       .on('get', (callback) => {
-        try {
-          callback(null, this.currentHeatingCoolingState);
-        } catch (err) {
-          this.log.error('Error in CurrentHeatingCoolingStateGet:', err.message);
-          callback(err);
-        }
+        callback(null, this.currentHeatingCoolingState);
       });
 
     this.thermostatService.getCharacteristic(hap.Characteristic.TargetHeatingCoolingState)
@@ -105,48 +101,29 @@ class VenstarThermostatAccessory {
         ]
       })
       .on('get', (callback) => {
-        try {
-          callback(null, this.targetHeatingCoolingState);
-        } catch (err) {
-          this.log.error('Error in TargetHeatingCoolingStateGet:', err.message);
-          callback(err);
-        }
+        callback(null, this.targetHeatingCoolingState);
       })
       .on('set', this.handleTargetHeatingCoolingStateSet.bind(this));
 
     this.thermostatService.getCharacteristic(hap.Characteristic.CurrentTemperature)
       .on('get', (callback) => {
-        try {
-          callback(null, this.currentTemperature);
-        } catch (err) {
-          this.log.error('Error in CurrentTemperatureGet:', err.message);
-          callback(err);
-        }
+        callback(null, this.currentTemperature);
       });
 
     this.thermostatService.getCharacteristic(hap.Characteristic.TargetTemperature)
       .on('get', (callback) => {
-        try {
-          callback(null, this.targetTemperature);
-        } catch (err) {
-          this.log.error('Error in TargetTemperatureGet:', err.message);
-          callback(err);
-        }
+        callback(null, this.targetTemperature);
       })
       .on('set', this.handleTargetTemperatureSet.bind(this))
       .setProps({ minValue: 10, maxValue: 32, minStep: 0.5 });
 
     this.thermostatService.getCharacteristic(hap.Characteristic.TemperatureDisplayUnits)
       .on('get', (callback) => {
-        try {
-          callback(null, this.temperatureDisplayUnits);
-        } catch (err) {
-          this.log.error('Error in TemperatureDisplayUnitsGet:', err.message);
-          callback(err);
-        }
+        callback(null, this.temperatureDisplayUnits);
       })
       .on('set', this.handleTemperatureDisplayUnitsSet.bind(this));
 
+    // Fan get handler is async, keep try/catch here
     this.fanService.getCharacteristic(hap.Characteristic.On)
       .on('get', async (callback) => {
         try {

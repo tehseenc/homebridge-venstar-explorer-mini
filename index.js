@@ -34,7 +34,7 @@ class VenstarExplorerMiniPlatform {
       // Register the accessories with Homebridge
       // This will make them appear under the main or child bridge
       if (this.accessories.length > 0) {
-        this.api.registerPlatformAccessories("homebridge-venstar-explorer-mini", "VenstarExplorerMini", this.accessories);
+        this.api.registerPlatformAccessories("homebridge-venstar-explorer-mini-dec-2024", "VenstarExplorerMini", this.accessories);
       }
     });
   }

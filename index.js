@@ -1,7 +1,7 @@
 'use strict';
 
 const axios = require('axios');
-let hap; 
+let hap;
 
 module.exports = (api) => {
   hap = api.hap;
@@ -15,42 +15,51 @@ class VenstarExplorerMiniPlatform {
     this.api = api;
 
     this.thermostats = config.thermostats || [];
-    this.accessories = []; // We'll store created accessories here.
+    this.accessories = [];
 
     if (!this.thermostats.length) {
       this.log.warn('No thermostats configured.');
     }
 
-    // Wait until Homebridge is ready to finish launching
+    // Called when cached accessories are loaded
     this.api.on('didFinishLaunching', () => {
       this.log('didFinishLaunching');
 
-      // Create accessories for each configured thermostat
+      // Create and register accessories for each thermostat in config
+      const newAccessories = [];
       for (const thermostatConfig of this.thermostats) {
-        const accessory = this.createThermostatAccessory(thermostatConfig);
-        this.accessories.push(accessory);
+        const uuid = this.api.hap.uuid.generate('homebridge:venstar:' + thermostatConfig.ip);
+        const existingAccessory = this.accessories.find(acc => acc.UUID === uuid);
+
+        if (existingAccessory) {
+          this.log(`Updating existing accessory: ${thermostatConfig.name}`);
+          existingAccessory.context.config = thermostatConfig;
+          new VenstarThermostatAccessory(this.log, thermostatConfig, this.api, existingAccessory);
+        } else {
+          this.log(`Adding new accessory: ${thermostatConfig.name}`);
+          const accessory = new this.api.platformAccessory(thermostatConfig.name, uuid);
+          accessory.context.config = thermostatConfig;
+          new VenstarThermostatAccessory(this.log, thermostatConfig, this.api, accessory);
+          newAccessories.push(accessory);
+        }
       }
 
-      // Register the accessories with Homebridge
-      // This will make them appear under the main or child bridge
-      if (this.accessories.length > 0) {
-this.api.registerPlatformAccessories("homebridge-venstar-explorer-mini-dec-2024", "VenstarExplorerMini", [accessory]);
+      if (newAccessories.length > 0) {
+        // Register the newly created accessories
+        this.api.registerPlatformAccessories("homebridge-venstar-explorer-mini-dec-2024", "VenstarExplorerMini", newAccessories);
+        this.accessories = this.accessories.concat(newAccessories);
       }
     });
   }
 
-  createThermostatAccessory(config) {
-    const uuid = this.api.hap.uuid.generate('homebridge:venstar:' + config.ip);
-    const accessory = new this.api.platformAccessory(config.name, uuid);
-
-    const venstarAccessory = new VenstarThermostatAccessory(
-      this.log,
-      config,
-      this.api,
-      accessory
-    );
-
-    return accessory;
+  configureAccessory(accessory) {
+    // This is called when Homebridge restores cached accessories upon restart
+    this.log(`Configuring cached accessory: ${accessory.displayName}`);
+    const config = accessory.context.config;
+    if (config) {
+      new VenstarThermostatAccessory(this.log, config, this.api, accessory);
+    }
+    this.accessories.push(accessory);
   }
 }
 
@@ -62,7 +71,7 @@ class VenstarThermostatAccessory {
     this.name = config.name || "Venstar Thermostat";
     this.ip = config.ip;
 
-    // Default internal states (in Celsius)
+    // Default states
     this.currentTemperature = 20;
     this.targetTemperature = 22;
     this.currentHeatingCoolingState = hap.Characteristic.CurrentHeatingCoolingState.OFF;
@@ -71,14 +80,20 @@ class VenstarThermostatAccessory {
     this.userChangedUnits = false;
     this.fanOn = false;
 
-    // Setup services
-    this.thermostatService = this.accessory.getService(hap.Service.Thermostat) ||
-      this.accessory.addService(hap.Service.Thermostat, this.name);
+    // Set Accessory Information
+    this.accessory.getService(hap.Service.AccessoryInformation)
+      .setCharacteristic(hap.Characteristic.Manufacturer, "Venstar")
+      .setCharacteristic(hap.Characteristic.Model, "Explorer Mini");
 
-    this.fanService = this.accessory.getService(hap.Service.Fan) ||
-      this.accessory.addService(hap.Service.Fan, `${this.name} Fan`);
+    // Thermostat service
+    this.thermostatService = this.accessory.getService(hap.Service.Thermostat)
+      || this.accessory.addService(hap.Service.Thermostat, this.name);
 
-    // Setup characteristic handlers for Thermostat
+    // Fan service
+    this.fanService = this.accessory.getService(hap.Service.Fan)
+      || this.accessory.addService(hap.Service.Fan, `${this.name} Fan`);
+
+    // Setup handlers
     this.thermostatService.getCharacteristic(hap.Characteristic.CurrentHeatingCoolingState)
       .on('get', this.handleCurrentHeatingCoolingStateGet.bind(this));
 
@@ -106,14 +121,13 @@ class VenstarThermostatAccessory {
       .on('get', this.handleTemperatureDisplayUnitsGet.bind(this))
       .on('set', this.handleTemperatureDisplayUnitsSet.bind(this));
 
-    // Setup characteristic handlers for Fan
     this.fanService.getCharacteristic(hap.Characteristic.On)
       .on('get', this.handleFanOnGet.bind(this))
       .on('set', this.handleFanOnSet.bind(this));
 
     // Start polling
     this.pollThermostat();
-    setInterval(() => {
+    this.pollInterval = setInterval(() => {
       this.pollThermostat();
     }, 60 * 1000);
   }
@@ -124,7 +138,6 @@ class VenstarThermostatAccessory {
       const response = await axios.get(infoUrl);
       const data = response.data;
 
-      // data includes: mode, spacetemp, heattemp, cooltemp, tempunits, state, fan
       const modeMap = {
         0: hap.Characteristic.TargetHeatingCoolingState.OFF,
         1: hap.Characteristic.TargetHeatingCoolingState.HEAT,
@@ -164,12 +177,8 @@ class VenstarThermostatAccessory {
       const avg = (data.heattemp + data.cooltemp) / 2;
       return this.convertToHomeKitTemp(avg, data.tempunits);
     }
-    if (data.mode === 1) {
-      return this.convertToHomeKitTemp(data.heattemp, data.tempunits);
-    }
-    if (data.mode === 2) {
-      return this.convertToHomeKitTemp(data.cooltemp, data.tempunits);
-    }
+    if (data.mode === 1) return this.convertToHomeKitTemp(data.heattemp, data.tempunits);
+    if (data.mode === 2) return this.convertToHomeKitTemp(data.cooltemp, data.tempunits);
     return this.convertToHomeKitTemp(data.spacetemp, data.tempunits);
   }
 
@@ -181,7 +190,6 @@ class VenstarThermostatAccessory {
   }
 
   convertToHomeKitTemp(temp, units) {
-    // If units=0 (F), convert to C
     if (units === 0) {
       return (temp - 32) * (5.0 / 9.0);
     }
@@ -190,19 +198,15 @@ class VenstarThermostatAccessory {
 
   convertFromHomeKitTemp(tempC, targetUnits) {
     if (targetUnits === 0) {
-      // Fahrenheit
       return Math.round((tempC * 9.0 / 5.0) + 32);
-    } else {
-      // Celsius
-      return Math.round(tempC);
     }
+    return Math.round(tempC);
   }
 
   async setThermostat(mode, heattemp, cooltemp, fan) {
     try {
       const controlUrl = `http://${this.ip}/control`;
       const payload = { mode };
-
       if (heattemp != null) payload.heattemp = heattemp;
       if (cooltemp != null) payload.cooltemp = cooltemp;
       if (fan != null) payload.fan = fan;
@@ -215,7 +219,7 @@ class VenstarThermostatAccessory {
     }
   }
 
-  // Thermostat Handlers
+  // Thermostat handlers
   handleCurrentHeatingCoolingStateGet(callback) {
     callback(null, this.currentHeatingCoolingState);
   }
@@ -302,7 +306,7 @@ class VenstarThermostatAccessory {
     callback(null);
   }
 
-  // Fan Handlers
+  // Fan handlers
   async handleFanOnGet(callback) {
     try {
       const response = await axios.get(`http://${this.ip}/query/info`);
